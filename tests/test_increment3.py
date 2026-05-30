@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 
 from obsidian_shim.client import ObsidianAPIError
-from obsidian_shim.tools import create_file, append_content, patch_content, delete_file
+from obsidian_shim.tools import (
+    create_file,
+    append_content,
+    patch_content,
+    delete_file,
+    _is_number,
+)
 from conftest import SCRATCH_NOTE, inject_client, mock_client
 
 
@@ -30,6 +36,18 @@ class TestCreateFileUnit:
         result = create_file("new.md", "hello world")
         assert "Created" in result
         client.write_file.assert_called_once_with("new.md", "hello world")
+
+    def test_probe_non_404_reraises_without_writing(self):
+        # A 500 during the existence probe must propagate, NOT be swallowed as
+        # "file absent" — otherwise a transient read error could clobber an
+        # existing file.
+        client = mock_client()
+        client.read_file.side_effect = ObsidianAPIError(500, "Internal Server Error")
+        inject_client(client)
+        with pytest.raises(ObsidianAPIError) as exc_info:
+            create_file("note.md", "new stuff")
+        assert exc_info.value.status_code == 500
+        client.write_file.assert_not_called()
 
 
 class TestAppendContentUnit:
@@ -78,6 +96,78 @@ class TestPatchContentUnit:
         inject_client(client)
         result = patch_content("missing.md", "x", "replace", "frontmatter", "field")
         assert "not found" in result.lower()
+
+
+class TestPatchContentTypeDetection:
+    """The frontmatter content-type routing (tools.py) — JSON value shapes go
+    out as application/json, everything else as text/markdown."""
+
+    @staticmethod
+    def _content_type_for(content: str, target_type: str = "frontmatter") -> str:
+        client = mock_client()
+        inject_client(client)
+        patch_content("note.md", content, "replace", target_type, "field")
+        # content_type is the last keyword arg the tool forwards to the client.
+        _, kwargs = client.patch_content.call_args
+        return kwargs["content_type"]
+
+    # -- frontmatter: shapes that must route to application/json --------------
+
+    @pytest.mark.parametrize("content", [
+        '["a", "b"]',          # array
+        '{"key": "value"}',    # object
+        '"a quoted string"',   # JSON string
+        "true",                 # bool
+        "false",
+        "null",                 # null
+        "42",                   # integer
+        "3.14",                 # float
+        "-1.5e3",               # scientific notation
+    ])
+    def test_json_shapes_use_application_json(self, content):
+        assert self._content_type_for(content) == "application/json"
+
+    # -- frontmatter: shapes that must stay text/markdown ---------------------
+
+    @pytest.mark.parametrize("content", [
+        "draft",                # bare scalar word
+        "published",
+        "5 apples",             # starts with digit but not a number
+        "true story",           # starts with 'true' but isn't the bool
+        "",                     # empty
+        "   ",                  # whitespace only
+    ])
+    def test_scalar_shapes_use_text_markdown(self, content):
+        assert self._content_type_for(content) == "text/markdown"
+
+    # -- non-frontmatter targets always stay text/markdown -------------------
+
+    @pytest.mark.parametrize("target_type", ["heading", "block"])
+    def test_non_frontmatter_targets_ignore_json_shape(self, target_type):
+        # Even JSON-looking content goes out as markdown for heading/block.
+        assert self._content_type_for('["x"]', target_type=target_type) == "text/markdown"
+
+    def test_heading_target_forwards_headers_unchanged(self):
+        client = mock_client()
+        inject_client(client)
+        result = patch_content(
+            "note.md", "new text", "append", "heading", "Section A/Subsection"
+        )
+        assert "Patched" in result
+        client.patch_content.assert_called_once_with(
+            "note.md", "new text", "append", "heading", "Section A/Subsection",
+            create_if_missing=False, content_type="text/markdown",
+        )
+
+
+class TestIsNumber:
+    @pytest.mark.parametrize("s", ["42", "3.14", "-1.5e3", "0", "-0", "1_000"])
+    def test_numbers(self, s):
+        assert _is_number(s) is True
+
+    @pytest.mark.parametrize("s", ["", "   ", "abc", "5 apples", "1,000", "true"])
+    def test_non_numbers(self, s):
+        assert _is_number(s) is False
 
 
 class TestDeleteFileUnit:

@@ -5,6 +5,13 @@
 ### Increment 5 — Commands
 - `list_commands` — list all available Obsidian commands
 - `execute_command` — execute a command by ID (with destructive-action warning in docstring)
+- Integration test verifying a bogus command ID surfaces the live API's 404 as the retryable "command not found" message (the guess-first/fall-back-to-`list_commands` contract)
+
+### Test hardening (gap analysis follow-up)
+- `patch_content` content-type detection now covered for all input shapes (array/object/quoted-string/bool/null/number → `application/json`; scalars/empty → `text/markdown`), plus heading/block targets and the `_is_number` helper
+- `create_file` existence-probe now tested to reraise on non-404 errors instead of silently overwriting
+- New `test_client.py` — unit coverage for `client.py` error translation (status, 300-char detail truncation, reason-phrase fallback) and JSON-key unwrapping (`files`/`commands`), runnable without a live vault
+- `view` end-past-EOF clamping and non-404 reraise
 
 ### Increment 4 — Periodic notes
 - `get_periodic_note` — current daily/weekly/monthly/quarterly/yearly note

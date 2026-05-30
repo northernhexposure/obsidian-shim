@@ -20,6 +20,10 @@ The plugin's heading-targeted PATCH appends content to the *end* of a heading's 
 | `append_content` | Append content to the end of a file (creates the file if absent) |
 | `patch_content` | Insert content relative to a heading, block, or frontmatter field |
 | `delete_file` | Delete a file (requires `confirm=true` as a safety guard) |
+| `get_periodic_note` | Get the current daily/weekly/monthly/quarterly/yearly note |
+| `get_recent_periodic_notes` | Walk backward through recent periodic notes (optionally with content) |
+| `list_commands` | List all available Obsidian command IDs and names |
+| `execute_command` | Execute an Obsidian command by ID (with a destructive-action warning) |
 
 ## Prerequisites
 

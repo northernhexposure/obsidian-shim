@@ -126,6 +126,24 @@ class TestViewUnit:
         assert "Error" in result
         assert "invalid view_range" in result
 
+    def test_view_range_end_past_eof_clamps(self):
+        # end beyond the last line is clamped, not an error.
+        client = mock_client()
+        client.read_file.return_value = "line1\nline2\nline3\n"
+        inject_client(client)
+        result = view("note.md", view_range=[2, 99])
+        assert "Error" not in result
+        assert "2: line2" in result
+        assert "3: line3" in result
+        assert "1: line1" not in result
+
+    def test_non_404_error_reraises(self):
+        client = mock_client()
+        client.read_file.side_effect = ObsidianAPIError(503, "Service Unavailable")
+        inject_client(client)
+        with pytest.raises(ObsidianAPIError):
+            view("note.md")
+
 
 # =========================================================================
 # Unit tests — list_files error handling

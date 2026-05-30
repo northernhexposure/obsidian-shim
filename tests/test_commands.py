@@ -94,3 +94,13 @@ class TestCommandsIntegration:
         # Open help is a safe, no-op-ish command available in all vaults.
         result = execute_command("app:open-help")
         assert "Executed" in result
+
+    def test_execute_nonexistent_command_returns_clean_404(self, live_client):
+        inject_client(live_client)
+        # A bogus ID must surface as the retryable "command not found" message
+        # (the guess-first/fall-back-to-list_commands contract in the docstring),
+        # not an unhandled exception or opaque error.
+        result = execute_command("theme:does-not-exist")
+        assert isinstance(result, str)
+        assert "not found" in result.lower()
+        assert "theme:does-not-exist" in result
