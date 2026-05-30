@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from mcp.server.fastmcp import FastMCP
 
 from obsidian_shim.client import ObsidianClient, ObsidianAPIError

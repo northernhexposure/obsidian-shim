@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import os
+import time
 from unittest.mock import MagicMock
 
 import pytest
 
 from obsidian_shim.client import ObsidianClient, ObsidianAPIError
 from obsidian_shim.tools import get_file_contents, batch_get_file_contents, simple_search
+from conftest import SCRATCH_NOTE, SCRATCH_NOTE_2, inject_client, mock_client
 
 
 # =========================================================================
@@ -17,38 +18,28 @@ from obsidian_shim.tools import get_file_contents, batch_get_file_contents, simp
 
 class TestGetFileContentsUnit:
 
-    @staticmethod
-    def _inject(client):
-        import obsidian_shim.tools as m
-        m._client = client
-
     def test_returns_raw_content(self):
-        client = MagicMock(spec=ObsidianClient)
+        client = mock_client()
         client.read_file.return_value = "# Title\n\nBody text\n"
-        self._inject(client)
+        inject_client(client)
         result = get_file_contents("note.md")
         assert result == "# Title\n\nBody text\n"
         client.read_file.assert_called_once_with("note.md")
 
     def test_404_returns_error(self):
-        client = MagicMock(spec=ObsidianClient)
+        client = mock_client()
         client.read_file.side_effect = ObsidianAPIError(404, "Not Found")
-        self._inject(client)
+        inject_client(client)
         result = get_file_contents("missing.md")
         assert "not found" in result.lower()
 
 
 class TestBatchGetFileContentsUnit:
 
-    @staticmethod
-    def _inject(client):
-        import obsidian_shim.tools as m
-        m._client = client
-
     def test_concatenates_with_headers(self):
-        client = MagicMock(spec=ObsidianClient)
+        client = mock_client()
         client.read_file.side_effect = lambda fp: f"content of {fp}"
-        self._inject(client)
+        inject_client(client)
         result = batch_get_file_contents(["a.md", "b.md"])
         assert "# a.md" in result
         assert "content of a.md" in result
@@ -56,7 +47,7 @@ class TestBatchGetFileContentsUnit:
         assert "content of b.md" in result
 
     def test_one_404_does_not_fail_batch(self):
-        client = MagicMock(spec=ObsidianClient)
+        client = mock_client()
 
         def fake_read(fp):
             if fp == "bad.md":
@@ -64,7 +55,7 @@ class TestBatchGetFileContentsUnit:
             return f"content of {fp}"
 
         client.read_file.side_effect = fake_read
-        self._inject(client)
+        inject_client(client)
         result = batch_get_file_contents(["good.md", "bad.md", "also_good.md"])
         assert "content of good.md" in result
         assert "content of also_good.md" in result
@@ -74,13 +65,8 @@ class TestBatchGetFileContentsUnit:
 
 class TestSimpleSearchUnit:
 
-    @staticmethod
-    def _inject(client):
-        import obsidian_shim.tools as m
-        m._client = client
-
     def test_passes_context_length_and_returns_results(self):
-        client = MagicMock(spec=ObsidianClient)
+        client = mock_client()
         fake_results = [
             {
                 "filename": "note.md",
@@ -89,15 +75,15 @@ class TestSimpleSearchUnit:
             }
         ]
         client.search.return_value = fake_results
-        self._inject(client)
+        inject_client(client)
         result = simple_search("text", context_length=50)
         client.search.assert_called_once_with("text", context_length=50)
         assert result == fake_results
 
     def test_empty_results(self):
-        client = MagicMock(spec=ObsidianClient)
+        client = mock_client()
         client.search.return_value = []
-        self._inject(client)
+        inject_client(client)
         result = simple_search("xyznonexistent999")
         assert result == []
 
@@ -106,69 +92,34 @@ class TestSimpleSearchUnit:
 # Integration tests — live Obsidian Local REST API
 # =========================================================================
 
-SCRATCH_NOTE = "_mcp-test.md"
-SCRATCH_NOTE_2 = "_mcp-test-2.md"
-
-
-@pytest.fixture()
-def live_client():
-    key = os.environ.get("OBSIDIAN_API_KEY")
-    if not key:
-        pytest.skip("OBSIDIAN_API_KEY not set")
-    return ObsidianClient(api_key=key)
-
-
-@pytest.fixture()
-def scratch_note(live_client: ObsidianClient):
-    """Create and clean up scratch notes around each test."""
-    yield live_client
-    for note in (SCRATCH_NOTE, SCRATCH_NOTE_2):
-        try:
-            live_client.delete_file(note)
-        except Exception:
-            pass
-
-
 @pytest.mark.integration
 class TestIncrement2Integration:
 
-    @staticmethod
-    def _inject(client):
-        import obsidian_shim.tools as m
-        m._client = client
-
-    def test_get_file_contents_live(self, scratch_note: ObsidianClient):
-        client = scratch_note
+    def test_get_file_contents_live(self, scratch):
         content = "# Integration\n\nHello from get_file_contents — 🌿\n"
-        client.write_file(SCRATCH_NOTE, content)
-        self._inject(client)
+        scratch.write_file(SCRATCH_NOTE, content)
+        inject_client(scratch)
         result = get_file_contents(SCRATCH_NOTE)
         assert result == content
 
-    def test_batch_get_file_contents_live(self, scratch_note: ObsidianClient):
-        client = scratch_note
+    def test_batch_get_file_contents_live(self, scratch):
         c1 = "# Note One\n\nFirst note.\n"
         c2 = "# Note Two\n\nSecond note.\n"
-        client.write_file(SCRATCH_NOTE, c1)
-        client.write_file(SCRATCH_NOTE_2, c2)
-        self._inject(client)
+        scratch.write_file(SCRATCH_NOTE, c1)
+        scratch.write_file(SCRATCH_NOTE_2, c2)
+        inject_client(scratch)
         result = batch_get_file_contents([SCRATCH_NOTE, SCRATCH_NOTE_2])
         assert f"# {SCRATCH_NOTE}" in result
         assert "First note." in result
         assert f"# {SCRATCH_NOTE_2}" in result
         assert "Second note." in result
 
-    def test_simple_search_finds_distinctive_term(self, scratch_note: ObsidianClient):
-        client = scratch_note
-        # Use a distinctive term unlikely to appear elsewhere
+    def test_simple_search_finds_distinctive_term(self, scratch):
         distinctive = "xylophoneUnicorn7742"
         content = f"# Search Test\n\nThis note contains {distinctive} for testing.\n"
-        client.write_file(SCRATCH_NOTE, content)
-
-        import time
+        scratch.write_file(SCRATCH_NOTE, content)
         time.sleep(0.5)  # brief pause for indexing
-
-        self._inject(client)
+        inject_client(scratch)
         results = simple_search(distinctive)
         assert isinstance(results, list)
         assert len(results) > 0
@@ -177,9 +128,8 @@ class TestIncrement2Integration:
             f"Expected {SCRATCH_NOTE} in results, got: {filenames}"
         )
 
-    def test_simple_search_no_hits(self, scratch_note: ObsidianClient):
-        client = scratch_note
-        self._inject(client)
+    def test_simple_search_no_hits(self, scratch):
+        inject_client(scratch)
         results = simple_search("zzzNonExistentGibberish99182736")
         assert isinstance(results, list)
         assert len(results) == 0
