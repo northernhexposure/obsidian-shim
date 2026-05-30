@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 import httpx
@@ -67,6 +68,42 @@ class ObsidianClient:
         resp = self._client.get(path, headers={"Accept": "application/json"})
         self._raise_for_status(resp)
         return resp.json()["files"]
+
+    def append_content(self, filepath: str, content: str) -> None:
+        """POST /vault/{filepath} — append content to end of file (creates if absent)."""
+        resp = self._client.post(
+            f"/vault/{filepath}",
+            content=content.encode("utf-8"),
+            headers={"Content-Type": "text/markdown"},
+        )
+        self._raise_for_status(resp)
+
+    def patch_content(
+        self,
+        filepath: str,
+        content: str,
+        operation: str,
+        target_type: str,
+        target: str,
+        *,
+        create_if_missing: bool = False,
+        content_type: str = "text/markdown",
+    ) -> None:
+        """PATCH /vault/{filepath} — insert content relative to a target."""
+        headers: dict[str, str] = {
+            "Operation": operation,
+            "Target-Type": target_type,
+            "Target": target,
+            "Content-Type": content_type,
+        }
+        if create_if_missing:
+            headers["Create-Target-If-Missing"] = "true"
+        resp = self._client.patch(
+            f"/vault/{filepath}",
+            content=content.encode("utf-8"),
+            headers=headers,
+        )
+        self._raise_for_status(resp)
 
     def search(self, query: str, context_length: int = 100) -> list[dict]:
         """POST /search/simple/ → JSON array of search results."""

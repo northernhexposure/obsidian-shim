@@ -1,6 +1,8 @@
-"""MCP tool definitions: view, str_replace, list_files, get_file_contents, batch_get_file_contents, simple_search."""
+"""MCP tool definitions for obsidian-shim (Increments 1–3)."""
 
 from __future__ import annotations
+
+import json
 
 from mcp.server.fastmcp import FastMCP
 
@@ -170,3 +172,122 @@ def simple_search(query: str, context_length: int = 100) -> list[dict]:
     """Search the vault for a text query. Returns filename, score, and match contexts."""
     client = _get_client()
     return client.search(query, context_length=context_length)
+
+
+# ---------------------------------------------------------------------------
+# create_file
+# ---------------------------------------------------------------------------
+
+@mcp_server.tool()
+def create_file(filepath: str, content: str) -> str:
+    """Create a new file in the vault. Refuses to overwrite an existing file."""
+    client = _get_client()
+    # Check existence first — safe in single-writer environment.
+    try:
+        client.read_file(filepath)
+        return f"Error: file already exists: {filepath}"
+    except ObsidianAPIError as exc:
+        if exc.status_code != 404:
+            raise
+    # File does not exist — create it.
+    client.write_file(filepath, content)
+    return f"Created {filepath}"
+
+
+# ---------------------------------------------------------------------------
+# append_content
+# ---------------------------------------------------------------------------
+
+@mcp_server.tool()
+def append_content(filepath: str, content: str) -> str:
+    """Append content to the end of a vault file (creates the file if absent)."""
+    client = _get_client()
+    client.append_content(filepath, content)
+    return f"Appended to {filepath}"
+
+
+# ---------------------------------------------------------------------------
+# patch_content
+# ---------------------------------------------------------------------------
+
+@mcp_server.tool()
+def patch_content(
+    filepath: str,
+    content: str,
+    operation: str,
+    target_type: str,
+    target: str,
+    create_if_missing: bool = False,
+) -> str:
+    """Insert content into a vault file relative to a heading, block, or frontmatter field.
+
+    This tool is primarily intended for **frontmatter** edits (e.g. setting a
+    field value or appending tags). For frontmatter list fields like ``tags``,
+    pass a JSON array string (e.g. ``'["new-tag"]'``) as ``content``.
+
+    WARNING: For heading/block targets, append lands at the END of the section
+    — past any ``---`` divider — which can misplace content. Use ``str_replace``
+    for precise body edits instead.
+
+    Args:
+        filepath: Vault-relative path to the file.
+        content: The content to insert. For frontmatter list fields, use a
+            JSON array string (e.g. '["value"]').
+        operation: "append", "prepend", or "replace".
+        target_type: "frontmatter", "heading", or "block".
+        target: The frontmatter field name, heading path, or block reference.
+        create_if_missing: If True, create the target if it doesn't exist.
+    """
+    client = _get_client()
+
+    # Determine content type: use application/json for frontmatter when the
+    # content looks like a JSON value (array, object, number, bool, null).
+    content_type = "text/markdown"
+    if target_type == "frontmatter":
+        stripped = content.strip()
+        if stripped and stripped[0] in ('[', '{', '"') or stripped in ('true', 'false', 'null') or _is_number(stripped):
+            content_type = "application/json"
+
+    try:
+        client.patch_content(
+            filepath,
+            content,
+            operation,
+            target_type,
+            target,
+            create_if_missing=create_if_missing,
+            content_type=content_type,
+        )
+    except ObsidianAPIError as exc:
+        if exc.status_code == 404:
+            return f"Error: file or target not found: {filepath} / {target}"
+        raise
+    return f"Patched {target_type} '{target}' in {filepath} ({operation})"
+
+
+def _is_number(s: str) -> bool:
+    """Check if string looks like a JSON number."""
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# delete_file
+# ---------------------------------------------------------------------------
+
+@mcp_server.tool()
+def delete_file(filepath: str, confirm: bool = False) -> str:
+    """Delete a file from the vault. Requires confirm=True as a safety guard."""
+    if not confirm:
+        return "Error: deletion requires confirm=true"
+    client = _get_client()
+    try:
+        client.delete_file(filepath)
+    except ObsidianAPIError as exc:
+        if exc.status_code == 404:
+            return f"Error: file not found: {filepath}"
+        raise
+    return f"Deleted {filepath}"
