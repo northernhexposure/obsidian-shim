@@ -1,6 +1,8 @@
-"""MCP tool definitions for obsidian-shim (Increments 1–3)."""
+"""MCP tool definitions for obsidian-shim."""
 
 from __future__ import annotations
+
+import datetime
 
 from mcp.server.fastmcp import FastMCP
 
@@ -368,3 +370,119 @@ def delete_file(filepath: str, confirm: bool = False) -> str:
             return f"Error: file not found: {filepath}"
         raise
     return f"Deleted {filepath}"
+
+
+# ---------------------------------------------------------------------------
+# get_periodic_note
+# ---------------------------------------------------------------------------
+
+_VALID_PERIODS = ("daily", "weekly", "monthly", "quarterly", "yearly")
+
+
+@mcp_server.tool()
+def get_periodic_note(period: str) -> str:
+    """Get the current periodic note for the given period type.
+
+    Returns the raw markdown content of today's daily note, this week's weekly
+    note, etc. Returns an error message if the periodic notes plugin is not
+    configured or no note exists for the current period.
+
+    Args:
+        period: One of "daily", "weekly", "monthly", "quarterly", "yearly".
+    """
+    if period not in _VALID_PERIODS:
+        return f"Error: invalid period '{period}'. Must be one of: {', '.join(_VALID_PERIODS)}"
+    client = _get_client()
+    try:
+        resp = client.get_periodic_note(period)
+        return resp.text
+    except ObsidianAPIError as exc:
+        if exc.status_code == 404:
+            return f"Error: no {period} note found for the current period"
+        if exc.status_code == 500:
+            return f"Error: {period} periodic notes are not configured in Obsidian"
+        raise
+
+
+# ---------------------------------------------------------------------------
+# get_recent_periodic_notes
+# ---------------------------------------------------------------------------
+
+def _step_back(date: datetime.date, period: str) -> datetime.date:
+    """Step a date backward by one period increment."""
+    if period == "daily":
+        return date - datetime.timedelta(days=1)
+    if period == "weekly":
+        return date - datetime.timedelta(weeks=1)
+    if period == "monthly":
+        m = date.month - 1
+        y = date.year + (m - 1) // 12
+        m = (m - 1) % 12 + 1
+        return date.replace(year=y, month=m, day=min(date.day, _days_in_month(y, m)))
+    if period == "quarterly":
+        m = date.month - 3
+        y = date.year
+        while m < 1:
+            m += 12
+            y -= 1
+        return date.replace(year=y, month=m, day=min(date.day, _days_in_month(y, m)))
+    # yearly
+    return date.replace(year=date.year - 1)
+
+
+def _days_in_month(year: int, month: int) -> int:
+    """Return the number of days in a given month."""
+    if month == 12:
+        return 31
+    return (datetime.date(year, month + 1, 1) - datetime.date(year, month, 1)).days
+
+
+@mcp_server.tool()
+def get_recent_periodic_notes(
+    period: str,
+    limit: int = 5,
+    include_content: bool = False,
+) -> list[dict] | str:
+    """Get recent periodic notes by iterating backward from today.
+
+    Walks backward through dates, fetching periodic notes that exist. Useful
+    for reviewing recent daily notes, weekly summaries, etc.
+
+    Args:
+        period: One of "daily", "weekly", "monthly", "quarterly", "yearly".
+        limit: Maximum number of notes to return (default 5, max 50).
+        include_content: If True, include file content in each result.
+    """
+    if period not in _VALID_PERIODS:
+        return f"Error: invalid period '{period}'. Must be one of: {', '.join(_VALID_PERIODS)}"
+    limit = max(1, min(limit, 50))
+    max_misses = limit * 3
+
+    client = _get_client()
+    results: list[dict] = []
+    consecutive_misses = 0
+    date = datetime.date.today()
+
+    while len(results) < limit and consecutive_misses < max_misses:
+        try:
+            resp = client.get_periodic_note_by_date(
+                period, date.year, date.month, date.day
+            )
+            entry: dict = {
+                "filepath": resp.headers.get("Content-Location", ""),
+                "period_date": date.isoformat(),
+            }
+            if include_content:
+                entry["content"] = resp.text
+            results.append(entry)
+            consecutive_misses = 0
+        except ObsidianAPIError as exc:
+            if exc.status_code == 500:
+                return f"Error: {period} periodic notes are not configured in Obsidian"
+            if exc.status_code == 404:
+                consecutive_misses += 1
+            else:
+                raise
+        date = _step_back(date, period)
+
+    return results

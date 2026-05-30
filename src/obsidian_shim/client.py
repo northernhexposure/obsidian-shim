@@ -114,6 +114,26 @@ class ObsidianClient:
         self._raise_for_status(resp)
         return resp.json()
 
+    def get_periodic_note(self, period: str) -> httpx.Response:
+        """GET /periodic/{period}/ → raw response (content + headers)."""
+        resp = self._client.get(
+            f"/periodic/{period}/",
+            headers={"Accept": "text/markdown"},
+        )
+        self._raise_for_status(resp)
+        return resp
+
+    def get_periodic_note_by_date(
+        self, period: str, year: int, month: int, day: int
+    ) -> httpx.Response:
+        """GET /periodic/{period}/{year}/{month}/{day}/ → raw response."""
+        resp = self._client.get(
+            f"/periodic/{period}/{year}/{month}/{day}/",
+            headers={"Accept": "text/markdown"},
+        )
+        self._raise_for_status(resp)
+        return resp
+
     def delete_file(self, filepath: str) -> None:
         """DELETE /vault/{filepath} — used only for test cleanup."""
         resp = self._client.delete(f"/vault/{filepath}")

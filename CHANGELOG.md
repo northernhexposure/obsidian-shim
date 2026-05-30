@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 — 2026-05-30
+
+### Increment 4 — Periodic notes
+- `get_periodic_note` — current daily/weekly/monthly/quarterly/yearly note
+- `get_recent_periodic_notes` — iterate backward through recent periodic notes
+- Graceful handling when periodic notes plugin is not configured (error message, not crash)
+- Improved tool docstrings for better MCP discoverability
+
 ## 0.1.0 — 2026-05-30
 
 Initial release. Ten MCP tools replacing `mcp-obsidian` as the stdio server
