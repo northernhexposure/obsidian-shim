@@ -2,6 +2,10 @@
 
 ## 0.2.0 — 2026-05-30
 
+### Increment 5 — Commands
+- `list_commands` — list all available Obsidian commands
+- `execute_command` — execute a command by ID (with destructive-action warning in docstring)
+
 ### Increment 4 — Periodic notes
 - `get_periodic_note` — current daily/weekly/monthly/quarterly/yearly note
 - `get_recent_periodic_notes` — iterate backward through recent periodic notes

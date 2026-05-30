@@ -77,9 +77,9 @@ def _str_replace_impl(
 
     count = content.count(old_str)
     if count == 0:
-        raise ValueError("old_str not found")
+        raise ValueError("search text not found in file")
     if count > 1:
-        raise ValueError(f"old_str is not unique (found {count} times)")
+        raise ValueError(f"search text is not unique ({count} matches); add more context")
 
     new_content = content.replace(old_str, new_str, 1)
     client.write_file(filepath, new_content)
@@ -134,7 +134,7 @@ def str_replace(filepath: str, old_str: str, new_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp_server.tool()
-def list_files(dirpath: str | None = None) -> list[str]:
+def list_files(dirpath: str | None = None) -> list[str] | str:
     """List files and directories under a vault path.
 
     Use this to discover vault structure or find files by browsing. Returns a
@@ -146,7 +146,12 @@ def list_files(dirpath: str | None = None) -> list[str]:
             empty string for the vault root.
     """
     client = _get_client()
-    return client.list_files(dirpath or "")
+    try:
+        return client.list_files(dirpath or "")
+    except ObsidianAPIError as exc:
+        if exc.status_code == 404:
+            return f"Error: directory not found: {dirpath}"
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +215,7 @@ def batch_get_file_contents(filepaths: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 @mcp_server.tool()
-def simple_search(query: str, context_length: int = 100) -> list[dict]:
+def simple_search(query: str, context_length: int = 100) -> list[dict] | str:
     """Full-text search across all vault files.
 
     Use this to find notes containing a word or phrase. Returns a list of
@@ -223,7 +228,10 @@ def simple_search(query: str, context_length: int = 100) -> list[dict]:
         context_length: Characters of context around each match (default 100).
     """
     client = _get_client()
-    return client.search(query, context_length=context_length)
+    try:
+        return client.search(query, context_length=context_length)
+    except ObsidianAPIError as exc:
+        return f"Error: search failed (HTTP {exc.status_code})"
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +281,10 @@ def append_content(filepath: str, content: str) -> str:
             line before the new content).
     """
     client = _get_client()
-    client.append_content(filepath, content)
+    try:
+        client.append_content(filepath, content)
+    except ObsidianAPIError as exc:
+        return f"Error: append failed for {filepath} (HTTP {exc.status_code})"
     return f"Appended to {filepath}"
 
 
@@ -394,8 +405,8 @@ def get_periodic_note(period: str) -> str:
         return f"Error: invalid period '{period}'. Must be one of: {', '.join(_VALID_PERIODS)}"
     client = _get_client()
     try:
-        resp = client.get_periodic_note(period)
-        return resp.text
+        result = client.get_periodic_note(period)
+        return result.content
     except ObsidianAPIError as exc:
         if exc.status_code == 404:
             return f"Error: no {period} note found for the current period"
@@ -427,7 +438,8 @@ def _step_back(date: datetime.date, period: str) -> datetime.date:
             y -= 1
         return date.replace(year=y, month=m, day=min(date.day, _days_in_month(y, m)))
     # yearly
-    return date.replace(year=date.year - 1)
+    y = date.year - 1
+    return date.replace(year=y, day=min(date.day, _days_in_month(y, date.month)))
 
 
 def _days_in_month(year: int, month: int) -> int:
@@ -465,15 +477,15 @@ def get_recent_periodic_notes(
 
     while len(results) < limit and consecutive_misses < max_misses:
         try:
-            resp = client.get_periodic_note_by_date(
+            result = client.get_periodic_note_by_date(
                 period, date.year, date.month, date.day
             )
             entry: dict = {
-                "filepath": resp.headers.get("Content-Location", ""),
+                "filepath": result.filepath,
                 "period_date": date.isoformat(),
             }
             if include_content:
-                entry["content"] = resp.text
+                entry["content"] = result.content
             results.append(entry)
             consecutive_misses = 0
         except ObsidianAPIError as exc:
@@ -486,3 +498,66 @@ def get_recent_periodic_notes(
         date = _step_back(date, period)
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# list_commands
+# ---------------------------------------------------------------------------
+
+@mcp_server.tool()
+def list_commands() -> list[dict] | str:
+    """List all available Obsidian commands.
+
+    Returns a list of commands, each with ``id`` and ``name`` fields. Use the
+    ``id`` value to execute a command via ``execute_command``.
+    """
+    client = _get_client()
+    try:
+        return client.list_commands()
+    except ObsidianAPIError as exc:
+        return f"Error: failed to list commands (HTTP {exc.status_code})"
+
+
+# ---------------------------------------------------------------------------
+# execute_command
+# ---------------------------------------------------------------------------
+
+@mcp_server.tool()
+def execute_command(command_id: str) -> str:
+    """Execute an Obsidian command by its ID.
+
+    Command IDs follow the pattern ``plugin:action``. Common prefixes and
+    examples::
+
+        app:open-settings, app:open-help, app:reload
+        editor:toggle-bold, editor:toggle-italics, editor:toggle-code
+        editor:toggle-checklist-status, editor:fold-all, editor:unfold-all
+        editor:insert-link, editor:insert-table, editor:insert-callout
+        theme:toggle-light-dark
+        workspace:split-vertical, workspace:close, workspace:export-pdf
+        file-explorer:new-file, file-explorer:move-file, file-explorer:reveal-active-file
+        graph:open, graph:open-local
+        daily-notes (open today), daily-notes:goto-next, daily-notes:goto-prev
+        obsidian-git:commit, obsidian-git:push2, obsidian-git:pull
+        bookmarks:bookmark-current-view, bookmarks:open
+        global-search:open, switcher:open, command-palette:open
+
+    Try the most obvious ID first — a 404 means the command doesn't exist,
+    and you can retry or fall back to ``list_commands`` to browse all ~300
+    available commands.
+
+    WARNING: Some commands are destructive (e.g. ``app:delete-file``,
+    ``obsidian-git:discard-all``). Confirm with the user before executing
+    anything that modifies or deletes data.
+
+    Args:
+        command_id: The command identifier (e.g. "theme:toggle-light-dark").
+    """
+    client = _get_client()
+    try:
+        client.execute_command(command_id)
+    except ObsidianAPIError as exc:
+        if exc.status_code == 404:
+            return f"Error: command not found: {command_id}"
+        raise
+    return f"Executed command: {command_id}"

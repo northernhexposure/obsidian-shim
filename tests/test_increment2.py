@@ -63,6 +63,23 @@ class TestBatchGetFileContentsUnit:
         assert "not found" in result.lower()
 
 
+class TestBatchGetFileContentsErrorUnit:
+
+    def test_non_404_error_inline_marker(self):
+        client = mock_client()
+
+        def fake_read(fp):
+            if fp == "broken.md":
+                raise ObsidianAPIError(500, "Internal Server Error")
+            return f"content of {fp}"
+
+        client.read_file.side_effect = fake_read
+        inject_client(client)
+        result = batch_get_file_contents(["good.md", "broken.md"])
+        assert "content of good.md" in result
+        assert "[Error: HTTP 500" in result
+
+
 class TestSimpleSearchUnit:
 
     def test_passes_context_length_and_returns_results(self):
@@ -86,6 +103,14 @@ class TestSimpleSearchUnit:
         inject_client(client)
         result = simple_search("xyznonexistent999")
         assert result == []
+
+    def test_error_returns_string(self):
+        client = mock_client()
+        client.search.side_effect = ObsidianAPIError(500, "Internal Server Error")
+        inject_client(client)
+        result = simple_search("query")
+        assert isinstance(result, str)
+        assert "Error" in result
 
 
 # =========================================================================

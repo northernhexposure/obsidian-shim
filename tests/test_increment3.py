@@ -41,6 +41,14 @@ class TestAppendContentUnit:
         assert "Appended" in result
         client.append_content.assert_called_once_with("note.md", "\nnew line")
 
+    def test_error_returns_string(self):
+        client = mock_client()
+        client.append_content.side_effect = ObsidianAPIError(500, "Internal Server Error")
+        inject_client(client)
+        result = append_content("note.md", "text")
+        assert "Error" in result
+        assert "append failed" in result
+
 
 class TestPatchContentUnit:
 

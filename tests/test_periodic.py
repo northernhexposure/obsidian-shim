@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import datetime
-from unittest.mock import MagicMock
 
 import pytest
 
-from obsidian_shim.client import ObsidianAPIError
+from obsidian_shim.client import ObsidianAPIError, PeriodicNoteResult
 from obsidian_shim.tools import get_periodic_note, get_recent_periodic_notes, _step_back
 from conftest import inject_client, mock_client
 
@@ -16,13 +15,21 @@ from conftest import inject_client, mock_client
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _mock_response(text: str = "", status_code: int = 200, headers: dict | None = None):
-    """Build a fake httpx.Response-like object."""
-    resp = MagicMock()
-    resp.text = text
-    resp.status_code = status_code
-    resp.headers = headers or {}
-    return resp
+def _note(content: str = "", filepath: str = "") -> PeriodicNoteResult:
+    return PeriodicNoteResult(content=content, filepath=filepath)
+
+
+def _freeze_today(monkeypatch, date: datetime.date):
+    """Patch datetime.date.today() in tools module while keeping real date/timedelta."""
+    monkeypatch.setattr(
+        "obsidian_shim.tools.datetime",
+        type("dt", (), {
+            "date": type("d", (datetime.date,), {
+                "today": staticmethod(lambda: date),
+            }),
+            "timedelta": datetime.timedelta,
+        }),
+    )
 
 
 # ===========================================================================
@@ -32,7 +39,7 @@ def _mock_response(text: str = "", status_code: int = 200, headers: dict | None 
 class TestGetPeriodicNote:
     def test_returns_content(self):
         client = mock_client()
-        client.get_periodic_note.return_value = _mock_response(text="# Today\nDid stuff")
+        client.get_periodic_note.return_value = _note(content="# Today\nDid stuff")
         inject_client(client)
 
         result = get_periodic_note("daily")
@@ -69,20 +76,11 @@ class TestGetPeriodicNote:
 
 class TestGetRecentPeriodicNotes:
     def test_collects_notes_backward(self, monkeypatch):
-        monkeypatch.setattr(
-            "obsidian_shim.tools.datetime",
-            type("dt", (), {
-                "date": type("d", (), {
-                    "today": staticmethod(lambda: datetime.date(2026, 5, 30)),
-                }),
-                "timedelta": datetime.timedelta,
-            }),
-        )
+        _freeze_today(monkeypatch, datetime.date(2026, 5, 30))
 
         client = mock_client()
-        # Return notes for all dates
-        client.get_periodic_note_by_date.return_value = _mock_response(
-            text="content", headers={"Content-Location": "/daily/2026-05-30.md"}
+        client.get_periodic_note_by_date.return_value = _note(
+            content="content", filepath="/daily/2026-05-30.md"
         )
         inject_client(client)
 
@@ -94,38 +92,19 @@ class TestGetRecentPeriodicNotes:
         assert "content" not in results[0]  # include_content defaults False
 
     def test_respects_limit(self, monkeypatch):
-        monkeypatch.setattr(
-            "obsidian_shim.tools.datetime",
-            type("dt", (), {
-                "date": type("d", (), {
-                    "today": staticmethod(lambda: datetime.date(2026, 5, 30)),
-                }),
-                "timedelta": datetime.timedelta,
-            }),
-        )
+        _freeze_today(monkeypatch, datetime.date(2026, 5, 30))
 
         client = mock_client()
-        client.get_periodic_note_by_date.return_value = _mock_response(
-            text="x", headers={"Content-Location": "note.md"}
-        )
+        client.get_periodic_note_by_date.return_value = _note(filepath="note.md")
         inject_client(client)
 
         results = get_recent_periodic_notes("daily", limit=2)
         assert len(results) == 2
 
     def test_stops_on_max_consecutive_misses(self, monkeypatch):
-        monkeypatch.setattr(
-            "obsidian_shim.tools.datetime",
-            type("dt", (), {
-                "date": type("d", (), {
-                    "today": staticmethod(lambda: datetime.date(2026, 5, 30)),
-                }),
-                "timedelta": datetime.timedelta,
-            }),
-        )
+        _freeze_today(monkeypatch, datetime.date(2026, 5, 30))
 
         client = mock_client()
-        # Always 404
         client.get_periodic_note_by_date.side_effect = ObsidianAPIError(404, "Not found")
         inject_client(client)
 
@@ -135,19 +114,11 @@ class TestGetRecentPeriodicNotes:
         assert client.get_periodic_note_by_date.call_count == 15
 
     def test_include_content_flag(self, monkeypatch):
-        monkeypatch.setattr(
-            "obsidian_shim.tools.datetime",
-            type("dt", (), {
-                "date": type("d", (), {
-                    "today": staticmethod(lambda: datetime.date(2026, 5, 30)),
-                }),
-                "timedelta": datetime.timedelta,
-            }),
-        )
+        _freeze_today(monkeypatch, datetime.date(2026, 5, 30))
 
         client = mock_client()
-        client.get_periodic_note_by_date.return_value = _mock_response(
-            text="# My Note", headers={"Content-Location": "daily/2026-05-30.md"}
+        client.get_periodic_note_by_date.return_value = _note(
+            content="# My Note", filepath="daily/2026-05-30.md"
         )
         inject_client(client)
 
@@ -156,15 +127,7 @@ class TestGetRecentPeriodicNotes:
         assert results[0]["content"] == "# My Note"
 
     def test_500_not_configured(self, monkeypatch):
-        monkeypatch.setattr(
-            "obsidian_shim.tools.datetime",
-            type("dt", (), {
-                "date": type("d", (), {
-                    "today": staticmethod(lambda: datetime.date(2026, 5, 30)),
-                }),
-                "timedelta": datetime.timedelta,
-            }),
-        )
+        _freeze_today(monkeypatch, datetime.date(2026, 5, 30))
 
         client = mock_client()
         client.get_periodic_note_by_date.side_effect = ObsidianAPIError(
@@ -183,15 +146,7 @@ class TestGetRecentPeriodicNotes:
         assert "invalid period" in result
 
     def test_mixed_hits_and_misses(self, monkeypatch):
-        monkeypatch.setattr(
-            "obsidian_shim.tools.datetime",
-            type("dt", (), {
-                "date": type("d", (), {
-                    "today": staticmethod(lambda: datetime.date(2026, 5, 30)),
-                }),
-                "timedelta": datetime.timedelta,
-            }),
-        )
+        _freeze_today(monkeypatch, datetime.date(2026, 5, 30))
 
         client = mock_client()
         call_count = 0
@@ -201,13 +156,26 @@ class TestGetRecentPeriodicNotes:
             call_count += 1
             if call_count % 2 == 0:
                 raise ObsidianAPIError(404, "Not found")
-            return _mock_response(text="x", headers={"Content-Location": "note.md"})
+            return _note(content="x", filepath="note.md")
 
         client.get_periodic_note_by_date.side_effect = alternate
         inject_client(client)
 
         results = get_recent_periodic_notes("daily", limit=3)
         assert len(results) == 3
+
+    def test_monthly_iteration(self, monkeypatch):
+        _freeze_today(monkeypatch, datetime.date(2026, 5, 30))
+
+        client = mock_client()
+        client.get_periodic_note_by_date.return_value = _note(filepath="monthly.md")
+        inject_client(client)
+
+        results = get_recent_periodic_notes("monthly", limit=3)
+        assert len(results) == 3
+        assert results[0]["period_date"] == "2026-05-30"
+        assert results[1]["period_date"] == "2026-04-30"
+        assert results[2]["period_date"] == "2026-03-30"
 
 
 # ===========================================================================
@@ -234,6 +202,10 @@ class TestStepBack:
     def test_yearly(self):
         assert _step_back(datetime.date(2026, 5, 30), "yearly") == datetime.date(2025, 5, 30)
 
+    def test_yearly_leap_day(self):
+        # Feb 29 leap year → Feb 28 non-leap year
+        assert _step_back(datetime.date(2024, 2, 29), "yearly") == datetime.date(2023, 2, 28)
+
     def test_monthly_january_wraps(self):
         assert _step_back(datetime.date(2026, 1, 15), "monthly") == datetime.date(2025, 12, 15)
 
@@ -252,7 +224,6 @@ class TestPeriodicIntegration:
         result = get_periodic_note("daily")
         if "not configured" in result:
             pytest.skip("Periodic notes not configured in vault")
-        # If configured, we either get content or a "no note found" message
         assert isinstance(result, str)
 
     def test_get_recent_periodic_notes(self, live_client):

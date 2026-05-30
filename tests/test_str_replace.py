@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from obsidian_shim.client import ObsidianClient
+from obsidian_shim.client import ObsidianClient, ObsidianAPIError
 from obsidian_shim.tools import _str_replace_impl, view, str_replace, list_files
-from conftest import SCRATCH_NOTE, inject_client
+from conftest import SCRATCH_NOTE, inject_client, mock_client
 
 
 # =========================================================================
@@ -26,13 +26,13 @@ class TestStrReplaceUnit:
 
     def test_zero_matches_raises(self):
         client = self._mock_client("hello world")
-        with pytest.raises(ValueError, match="old_str not found"):
+        with pytest.raises(ValueError, match="search text not found"):
             _str_replace_impl(client, "note.md", "missing", "x")
         client.write_file.assert_not_called()
 
     def test_multiple_matches_raises(self):
         client = self._mock_client("aaa bbb aaa")
-        with pytest.raises(ValueError, match=r"not unique \(found 2 times\)"):
+        with pytest.raises(ValueError, match=r"not unique \(2 matches\)"):
             _str_replace_impl(client, "note.md", "aaa", "x")
         client.write_file.assert_not_called()
 
@@ -72,6 +72,81 @@ class TestStrReplaceUnit:
         client = self._mock_client(content_without)
         _str_replace_impl(client, "note.md", "hello", "goodbye")
         client.write_file.assert_called_once_with("note.md", "goodbye")
+
+
+# =========================================================================
+# Unit tests — str_replace tool-level error handling
+# =========================================================================
+
+class TestStrReplaceTool:
+
+    def test_404_returns_error(self):
+        client = mock_client()
+        client.read_file.side_effect = ObsidianAPIError(404, "Not Found")
+        inject_client(client)
+        result = str_replace("missing.md", "old", "new")
+        assert "Error" in result
+        assert "not found" in result.lower()
+
+    def test_unexpected_status_reraises(self):
+        client = mock_client()
+        client.read_file.side_effect = ObsidianAPIError(503, "Service Unavailable")
+        inject_client(client)
+        with pytest.raises(ObsidianAPIError):
+            str_replace("note.md", "old", "new")
+
+
+# =========================================================================
+# Unit tests — view validation
+# =========================================================================
+
+class TestViewUnit:
+
+    def test_view_range_wrong_length(self):
+        client = mock_client()
+        client.read_file.return_value = "line1\nline2\nline3\n"
+        inject_client(client)
+        result = view("note.md", view_range=[1])
+        assert "Error" in result
+        assert "view_range" in result
+
+    def test_view_range_invalid_bounds(self):
+        client = mock_client()
+        client.read_file.return_value = "line1\nline2\nline3\n"
+        inject_client(client)
+        result = view("note.md", view_range=[5, 10])
+        assert "Error" in result
+        assert "invalid view_range" in result
+
+    def test_view_range_end_before_start(self):
+        client = mock_client()
+        client.read_file.return_value = "line1\nline2\nline3\n"
+        inject_client(client)
+        result = view("note.md", view_range=[3, 1])
+        assert "Error" in result
+        assert "invalid view_range" in result
+
+
+# =========================================================================
+# Unit tests — list_files error handling
+# =========================================================================
+
+class TestListFilesUnit:
+
+    def test_404_returns_error(self):
+        client = mock_client()
+        client.list_files.side_effect = ObsidianAPIError(404, "Not Found")
+        inject_client(client)
+        result = list_files("nonexistent/dir")
+        assert "Error" in result
+        assert "not found" in result.lower()
+
+    def test_unexpected_status_reraises(self):
+        client = mock_client()
+        client.list_files.side_effect = ObsidianAPIError(503, "Service Unavailable")
+        inject_client(client)
+        with pytest.raises(ObsidianAPIError):
+            list_files("some/dir")
 
 
 # =========================================================================

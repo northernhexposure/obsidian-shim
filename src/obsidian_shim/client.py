@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+from typing import NamedTuple
 
 import httpx
+
+
+class PeriodicNoteResult(NamedTuple):
+    """Content and filepath returned by a periodic note endpoint."""
+    content: str
+    filepath: str
 
 
 class ObsidianAPIError(Exception):
@@ -114,27 +121,44 @@ class ObsidianClient:
         self._raise_for_status(resp)
         return resp.json()
 
-    def get_periodic_note(self, period: str) -> httpx.Response:
-        """GET /periodic/{period}/ → raw response (content + headers)."""
+    def get_periodic_note(self, period: str) -> PeriodicNoteResult:
+        """GET /periodic/{period}/ → content and filepath."""
         resp = self._client.get(
             f"/periodic/{period}/",
             headers={"Accept": "text/markdown"},
         )
         self._raise_for_status(resp)
-        return resp
+        return PeriodicNoteResult(
+            content=resp.text,
+            filepath=resp.headers.get("Content-Location", ""),
+        )
 
     def get_periodic_note_by_date(
         self, period: str, year: int, month: int, day: int
-    ) -> httpx.Response:
-        """GET /periodic/{period}/{year}/{month}/{day}/ → raw response."""
+    ) -> PeriodicNoteResult:
+        """GET /periodic/{period}/{year}/{month}/{day}/ → content and filepath."""
         resp = self._client.get(
             f"/periodic/{period}/{year}/{month}/{day}/",
             headers={"Accept": "text/markdown"},
         )
         self._raise_for_status(resp)
-        return resp
+        return PeriodicNoteResult(
+            content=resp.text,
+            filepath=resp.headers.get("Content-Location", ""),
+        )
 
     def delete_file(self, filepath: str) -> None:
         """DELETE /vault/{filepath} — used only for test cleanup."""
         resp = self._client.delete(f"/vault/{filepath}")
+        self._raise_for_status(resp)
+
+    def list_commands(self) -> list[dict]:
+        """GET /commands/ → list of {id, name} dicts."""
+        resp = self._client.get("/commands/")
+        self._raise_for_status(resp)
+        return resp.json()["commands"]
+
+    def execute_command(self, command_id: str) -> None:
+        """POST /commands/{command_id}/ → execute, raise on error."""
+        resp = self._client.post(f"/commands/{command_id}/")
         self._raise_for_status(resp)
