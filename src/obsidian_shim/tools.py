@@ -25,7 +25,17 @@ def _get_client() -> ObsidianClient:
 
 @mcp_server.tool()
 def view(filepath: str, view_range: list[int] | None = None) -> str:
-    """Read a file from the vault. Optionally return only a range of lines (1-indexed, inclusive)."""
+    """Read a vault file with optional line-range selection.
+
+    Use this to inspect a specific section of a file (e.g. lines 10–25) or to
+    get line-numbered output for orientation. For the full raw content without
+    line numbers, use ``get_file_contents`` instead.
+
+    Args:
+        filepath: Vault-relative path (e.g. "Projects/todo.md").
+        view_range: Optional two-element list ``[start, end]`` (1-indexed,
+            inclusive). Omit to return the entire file as-is.
+    """
     client = _get_client()
     try:
         content = client.read_file(filepath)
@@ -89,12 +99,22 @@ def _str_replace_impl(
 
 @mcp_server.tool()
 def str_replace(filepath: str, old_str: str, new_str: str) -> str:
-    """Atomic find-and-replace of a unique string in a vault file.
+    """Surgically replace one unique string in a vault file.
 
-    Reads the file, verifies old_str appears exactly once, replaces it with
-    new_str, and writes the file back — all in one call. old_str may be
-    multiline; new_str may be empty (deletion). The file's encoding and
-    trailing-newline state are preserved byte-for-byte.
+    This is the primary editing tool. It reads the file, verifies ``old_str``
+    appears exactly once, replaces it with ``new_str``, and writes back
+    atomically. Use this instead of ``patch_content`` for any body-text edit —
+    it places content exactly where it belongs, even inside tables or above
+    ``---`` dividers.
+
+    - ``old_str`` may span multiple lines; include enough context to be unique.
+    - ``new_str`` may be empty to delete ``old_str``.
+    - Fails if ``old_str`` is not found or matches more than once.
+
+    Args:
+        filepath: Vault-relative path (e.g. "Projects/todo.md").
+        old_str: The exact text to find (must appear exactly once).
+        new_str: The replacement text (empty string = deletion).
     """
     client = _get_client()
     try:
@@ -113,7 +133,16 @@ def str_replace(filepath: str, old_str: str, new_str: str) -> str:
 
 @mcp_server.tool()
 def list_files(dirpath: str | None = None) -> list[str]:
-    """List files and directories in the vault root or a subdirectory."""
+    """List files and directories under a vault path.
+
+    Use this to discover vault structure or find files by browsing. Returns a
+    flat list of vault-relative paths. Pass no argument for the vault root, or
+    a directory path to list its children.
+
+    Args:
+        dirpath: Vault-relative directory (e.g. "Projects"). Omit or pass
+            empty string for the vault root.
+    """
     client = _get_client()
     return client.list_files(dirpath or "")
 
@@ -124,7 +153,15 @@ def list_files(dirpath: str | None = None) -> list[str]:
 
 @mcp_server.tool()
 def get_file_contents(filepath: str) -> str:
-    """Read the full raw content of a vault file (no line numbers, no range)."""
+    """Return the full raw content of a vault file.
+
+    Use this when you need the complete file text for processing or analysis.
+    Unlike ``view``, this returns raw content without line numbers, making it
+    suitable for feeding into ``str_replace`` or other transformations.
+
+    Args:
+        filepath: Vault-relative path (e.g. "Projects/todo.md").
+    """
     client = _get_client()
     try:
         return client.read_file(filepath)
@@ -140,10 +177,15 @@ def get_file_contents(filepath: str) -> str:
 
 @mcp_server.tool()
 def batch_get_file_contents(filepaths: list[str]) -> str:
-    """Read multiple vault files, concatenated with per-file headers.
+    """Read multiple vault files in one call, concatenated with headers.
 
-    If a file is missing or errors, an inline error marker is included
-    for that file and the rest continue normally.
+    Use this when you need content from several files at once (e.g. comparing
+    notes or gathering context). Each file appears under a ``# filepath``
+    header separated by ``---``. Missing files get an inline error marker
+    without aborting the batch.
+
+    Args:
+        filepaths: List of vault-relative paths.
     """
     client = _get_client()
     parts: list[str] = []
@@ -167,7 +209,17 @@ def batch_get_file_contents(filepaths: list[str]) -> str:
 
 @mcp_server.tool()
 def simple_search(query: str, context_length: int = 100) -> list[dict]:
-    """Search the vault for a text query. Returns filename, score, and match contexts."""
+    """Full-text search across all vault files.
+
+    Use this to find notes containing a word or phrase. Returns a list of
+    matches, each with ``filename``, ``score``, and ``matches`` (context
+    snippets around each hit). Use ``context_length`` to control how many
+    characters of surrounding text are returned per match.
+
+    Args:
+        query: The text to search for (plain text, not regex).
+        context_length: Characters of context around each match (default 100).
+    """
     client = _get_client()
     return client.search(query, context_length=context_length)
 
@@ -178,7 +230,16 @@ def simple_search(query: str, context_length: int = 100) -> list[dict]:
 
 @mcp_server.tool()
 def create_file(filepath: str, content: str) -> str:
-    """Create a new file in the vault. Refuses to overwrite an existing file."""
+    """Create a new file in the vault (will not overwrite existing files).
+
+    Use this to write a brand-new note. If a file already exists at the path,
+    this returns an error — use ``str_replace`` or ``patch_content`` to modify
+    existing files, or ``append_content`` to add to the end.
+
+    Args:
+        filepath: Vault-relative path for the new file (e.g. "Projects/new.md").
+        content: The full text content to write.
+    """
     client = _get_client()
     # Check existence first — safe in single-writer environment.
     try:
@@ -198,7 +259,17 @@ def create_file(filepath: str, content: str) -> str:
 
 @mcp_server.tool()
 def append_content(filepath: str, content: str) -> str:
-    """Append content to the end of a vault file (creates the file if absent)."""
+    """Append content to the end of a vault file.
+
+    Adds text after the file's existing content. Creates the file if it does
+    not exist. Use this for journal-style additions or appending new sections.
+    For inserting content at a specific location, use ``str_replace`` instead.
+
+    Args:
+        filepath: Vault-relative path (e.g. "Projects/log.md").
+        content: Text to append (include leading newline if you want a blank
+            line before the new content).
+    """
     client = _get_client()
     client.append_content(filepath, content)
     return f"Appended to {filepath}"
@@ -278,7 +349,15 @@ def _is_number(s: str) -> bool:
 
 @mcp_server.tool()
 def delete_file(filepath: str, confirm: bool = False) -> str:
-    """Delete a file from the vault. Requires confirm=True as a safety guard."""
+    """Permanently delete a file from the vault.
+
+    This is irreversible — the file is removed, not trashed. You must pass
+    ``confirm=True`` or the call is rejected.
+
+    Args:
+        filepath: Vault-relative path of the file to delete.
+        confirm: Must be True to proceed. Defaults to False as a safety guard.
+    """
     if not confirm:
         return "Error: deletion requires confirm=true"
     client = _get_client()
