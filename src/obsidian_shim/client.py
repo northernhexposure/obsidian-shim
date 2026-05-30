@@ -68,6 +68,15 @@ class ObsidianClient:
         self._raise_for_status(resp)
         return resp.json()["files"]
 
+    def search(self, query: str, context_length: int = 100) -> list[dict]:
+        """POST /search/simple/ → JSON array of search results."""
+        resp = self._client.post(
+            "/search/simple/",
+            params={"query": query, "contextLength": context_length},
+        )
+        self._raise_for_status(resp)
+        return resp.json()
+
     def delete_file(self, filepath: str) -> None:
         """DELETE /vault/{filepath} — used only for test cleanup."""
         resp = self._client.delete(f"/vault/{filepath}")

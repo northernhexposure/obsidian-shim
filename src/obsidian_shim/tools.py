@@ -1,4 +1,4 @@
-"""MCP tool definitions: view, str_replace, list_files."""
+"""MCP tool definitions: view, str_replace, list_files, get_file_contents, batch_get_file_contents, simple_search."""
 
 from __future__ import annotations
 
@@ -116,3 +116,57 @@ def list_files(dirpath: str | None = None) -> list[str]:
     """List files and directories in the vault root or a subdirectory."""
     client = _get_client()
     return client.list_files(dirpath or "")
+
+
+# ---------------------------------------------------------------------------
+# get_file_contents
+# ---------------------------------------------------------------------------
+
+@mcp_server.tool()
+def get_file_contents(filepath: str) -> str:
+    """Read the full raw content of a vault file (no line numbers, no range)."""
+    client = _get_client()
+    try:
+        return client.read_file(filepath)
+    except ObsidianAPIError as exc:
+        if exc.status_code == 404:
+            return f"Error: file not found: {filepath}"
+        raise
+
+
+# ---------------------------------------------------------------------------
+# batch_get_file_contents
+# ---------------------------------------------------------------------------
+
+@mcp_server.tool()
+def batch_get_file_contents(filepaths: list[str]) -> str:
+    """Read multiple vault files, concatenated with per-file headers.
+
+    If a file is missing or errors, an inline error marker is included
+    for that file and the rest continue normally.
+    """
+    client = _get_client()
+    parts: list[str] = []
+    for fp in filepaths:
+        parts.append(f"# {fp}\n")
+        try:
+            content = client.read_file(fp)
+            parts.append(content)
+        except ObsidianAPIError as exc:
+            if exc.status_code == 404:
+                parts.append(f"[Error: file not found: {fp}]\n")
+            else:
+                parts.append(f"[Error: HTTP {exc.status_code}: {exc}]\n")
+        parts.append("\n---\n")
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# simple_search
+# ---------------------------------------------------------------------------
+
+@mcp_server.tool()
+def simple_search(query: str, context_length: int = 100) -> list[dict]:
+    """Search the vault for a text query. Returns filename, score, and match contexts."""
+    client = _get_client()
+    return client.search(query, context_length=context_length)
